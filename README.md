@@ -13,6 +13,8 @@ This Terraform script deploys a Windows Server EC2 instance in a new VPC, privat
 
 ### Usage
 
+#### Deployment
+
 1. Clone the repository:
 
 ```bash
@@ -36,6 +38,12 @@ terraform apply
 ```
 
 Follow the on-screen prompts to confirm the deployment.
+
+#### Connecting to the Database
+
+- Retrieve the private key for the EC2 instances: `jq -r '.outputs.ec2_private_key.value | gsub("\\n"; "\n")' terraform.tfstate` > archer-ec2-key.pem
+- Get the EC2 password: `aws ec2 get-password-data --instance-id $(aws ec2 describe-instances --filters "Name=tag:Name,Values=Archer-Windows-Instance-SSMS" --query "Reservations[*].Instances[*].[InstanceId]" --no-cli-pager --output text) --priv-launch-key archer-ec2-key.pem --query 'PasswordData' --no-cli-pager --output text`
+- SSM to SSMS: `aws ssm start-session --target $(aws ec2 describe-instances --filters "Name=tag:Name,Values=Archer-Windows-Instance-SSMS" --query "Reservations[*].Instances[*].[InstanceId]" --no-cli-pager --output text) --document-name AWS-StartPortForwardingSession --parameters "localPortNumber=8765,portNumber=3389" --region us-west-2`
 
 ### Resources
 
