@@ -100,25 +100,57 @@ resource "aws_instance" "windows_instance_sql_server" {
   subnet_id              = aws_subnet.private_subnet.id
   vpc_security_group_ids = [aws_security_group.archer_sql_server.id]
 
-  #   user_data = <<EOF
-  # <powershell>
+  user_data = <<EOF
+<powershell>
 
-  # Start-Transcript -path "C:\Archer-Instance-Log.txt" -append
+Start-Transcript -path "C:\Archer-Instance-Log.txt" -append
 
-  # Write-Host "Configure UAC to allow privilege elevation in remote shells"
-  # Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name 'LocalAccountTokenFilterPolicy' -Value 1 -Force
+Write-Host "Configure UAC to allow privilege elevation in remote shells"
+Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System' -Name 'LocalAccountTokenFilterPolicy' -Value 1 -Force
 
-  # Write-Host "Install Chocolatey"
-  # Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+Write-Host "Install Chocolatey"
+Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
 
-  # Write-Host "Install SQL Server"
-  # choco install sql-server-express -y -v
-  # Write-Host "SQL Server installed"
+Write-Host "Install SQL Server"
+choco install sql-server-2022 -y -v
+Write-Host "SQL Server installed"
 
-  # Stop-Transcript
+Write-Host "Enabling SQL Server Browser service"
+Set-Service -Name 'SQLBrowser' -StartupType 'Automatic'
+Start-Service 'SQLBrowser'
 
-  # </powershell>
-  # EOF
+Write-Host "Allowing SQL Server traffic through the Windows Firewall"
+New-NetFirewallRule -DisplayName "SQL Server" -Direction Inbound -Protocol TCP -LocalPort 1433 -Action Allow
+
+Import-Module NetSecurity
+Set-NetFirewallRule -DisplayName "File and Printer Sharing (Echo Request - ICMPv4-In)" -enabled True
+
+Write-Host "Restarting SQL Server service to apply changes"
+Restart-Service -Name 'MSSQLSERVER'
+
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+Invoke-WebRequest -Uri https://github.com/PowerShell/PowerShellGet/archive/master.zip -OutFile c:\psget.zip
+Expand-Archive c:\psget.zip -DestinationPath C:\psget
+Set-Location c:\psget\PowerShellGet-master\src
+Import-Module PowerShellGet -Force
+Install-PackageProvider NuGet -Force
+Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+Install-Module -Name SqlServer -Force -AllowClobber
+Import-Module SqlServer
+
+# Specify SQL Server instance and login details
+$SqlServerInstance = "localhost"
+$Username = "sa"
+$Password = "${var.sa_password}"
+
+# # Create the SQL Server login
+Add-SqlLogin -ServerInstance $SqlServerInstance -LoginName $Username -LoginType SqlLogin -EncryptPassword $Password
+
+
+Stop-Transcript
+
+</powershell>
+EOF
 
   tags = {
     Name = "${var.stack_name}-Windows-Instance-SQL-Server"

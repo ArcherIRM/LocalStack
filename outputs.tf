@@ -15,7 +15,7 @@ output "ec2_sql_server_name" {
   value = aws_instance.windows_instance_sql_server.tags.Name
 }
 
-output "ec2_sql_server_admin_password" {
+output "ec2_sql_server_admin_user_password" {
   value = aws_instance.windows_instance_sql_server.password_data
 }
 
@@ -35,7 +35,7 @@ output "ec2_ssms_name" {
   value = aws_instance.windows_instance_ssms.tags.Name
 }
 
-output "ec2_ssme_admin_password" {
+output "ec2_ssme_admin_user_password" {
   value = aws_instance.windows_instance_ssms.password_data
 }
 
