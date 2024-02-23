@@ -112,21 +112,38 @@ Write-Host "Install Chocolatey"
 Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
 
 Write-Host "Install SQL Server"
-choco install sql-server-2022 -y -v
+choco install sql-server-2022 -y -v --params "'/SQLSYSADMINACCOUNTS=$${env:COMPUTERNAME}\*'"
 Write-Host "SQL Server installed"
 
-Write-Host "Enabling SQL Server Browser service"
-Set-Service -Name 'SQLBrowser' -StartupType 'Automatic'
+
+
+
+# Step 1: Set SQL Server Browser service to start automatically and start the service
+Write-Host "Setting SQL Server Browser service to Automatic and starting the service..."
+Set-Service 'SQLBrowser' -StartupType Automatic
 Start-Service 'SQLBrowser'
 
-Write-Host "Allowing SQL Server traffic through the Windows Firewall"
-New-NetFirewallRule -DisplayName "SQL Server" -Direction Inbound -Protocol TCP -LocalPort 1433 -Action Allow
+# Step 2: Enable TCP/IP protocol for SQL Server
+# Note: This step requires SQL Server Configuration Manager to be installed.
+Write-Host "Enabling TCP/IP protocol for SQL Server..."
+$sqlServerConfigManager = Get-WmiObject -Namespace "root\Microsoft\SqlServer\ComputerManagement16" -Class "ServerNetworkProtocol"
+$tcpIp = $sqlServerConfigManager | Where-Object { $_.InstanceName -eq 'MSSQLSERVER' -and $_.ProtocolName -eq 'Tcp' }
+$tcpIp.SetEnable()
 
-Import-Module NetSecurity
-Set-NetFirewallRule -DisplayName "File and Printer Sharing (Echo Request - ICMPv4-In)" -enabled True
+# Step 3: Set the TCP Port for IPAll to 1433
+Write-Host "Setting the TCP Port for IPAll to 1433..."
+$regPath = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\MSSQL16.MSSQLSERVER\MSSQLServer\SuperSocketNetLib\Tcp\IPAll"
+Set-ItemProperty -Path $regPath -Name TcpPort -Value "1433"
+Set-ItemProperty -Path $regPath -Name TcpDynamicPorts -Value ""
 
-Write-Host "Restarting SQL Server service to apply changes"
-Restart-Service -Name 'MSSQLSERVER'
+# Step 4: Create a firewall rule to allow TCP port 1433
+Write-Host "Creating a firewall rule for TCP port 1433..."
+New-NetFirewallRule -DisplayName "SQL Server Remote Access" -Direction Inbound -Protocol TCP -LocalPort 1433 -Action Allow
+
+Write-Host "SQL Server Express should now accept remote connections."
+
+Restart-Service 'MSSQLSERVER'
+Restart-Service 'SQLBrowser'
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 Invoke-WebRequest -Uri https://github.com/PowerShell/PowerShellGet/archive/master.zip -OutFile c:\psget.zip
@@ -139,12 +156,14 @@ Install-Module -Name SqlServer -Force -AllowClobber
 Import-Module SqlServer
 
 # Specify SQL Server instance and login details
-$SqlServerInstance = "localhost"
-$Username = "sa"
-$Password = "${var.sa_password}"
+# $SqlServerInstance = "$env:COMPUTERAME"
+$SqlServerInstance = "MSSQLSERVER"
+$Username = "localstack"
+# $Password = "${var.sa_password}"
+$Password = "asdf"
 
-# # Create the SQL Server login
-Add-SqlLogin -ServerInstance $SqlServerInstance -LoginName $Username -LoginType SqlLogin -EncryptPassword $Password
+# Create the SQL Server login
+Add-SqlLogin -ServerInstance $SqlServerInstance -LoginName $Username -LoginType SqlLogin -DefaultDatabase tempdb -Enable -GrantConnectSql # -EncryptPassword $Password 
 
 
 Stop-Transcript
