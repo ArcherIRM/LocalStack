@@ -9,7 +9,8 @@ This Terraform script deploys a Windows Server EC2 instance in a new VPC, privat
 ### Prerequisites
 
 - Terraform installed locally
-- AWS credentials configured
+- AWS CLI with credentials configured
+  - The AWS CLI [Session Manager Plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
 
 ### Usage
 
@@ -18,7 +19,7 @@ This Terraform script deploys a Windows Server EC2 instance in a new VPC, privat
 1. Clone the repository:
 
 ```bash
-git clone 
+git clone https://github.com/ArcherIRM/LocalStack.git
 ```
 
 2. Navigate to the project directory:
@@ -39,43 +40,89 @@ terraform plan # optional
 terraform apply
 ```
 
-6. Note the Terraform output values - some will be needed later.
-
 Follow the on-screen prompts to confirm the deployment.
+
+6. Note the Terraform output values - some will be needed later.
 
 _Note:_ Due to the various installations taking place on the machines, it will take 10-15 minutes before they are fully baked and ready for action.
 
-#### Connecting to the Database
+#### Connecting to the Database Machine
 
-_The below steps assume these actions are taken from the same directory and with the same AWS CLI configuration as the [Deployment](#deployment) section above._
+```mermaid
+graph LR
+    subgraph User PC
+        A
+        B
+    end
+    subgraph AWS
+        C
+        D
+    end
+
+    A[User PC] -->|RDP to Local Port 8765| B[SSM Ingress]
+    B[SSM Ingress] -->|SSM Connection| C[Bastion Host<br/>Archer-Instance-SSMS]
+    C -->|DB/PS/Tunnel Connection| D[Database Server<br/>Archer-Instance-SQL-Server]
+```
+
+##### Notes
+
+- The below steps assume these actions are taken from the same directory and with the same AWS CLI configuration as the [Deployment](#deployment) section above.
+- The database server deployment does not create a user as a part of the deployment.
+
+##### Steps
 
 1. Retrieve the private key for the EC2 instances from the Terraform state file:
-    `jq -r '.outputs.ec2_private_key.value | gsub("\\n"; "\n")' terraform.tfstate > archer-ec2-key.pem`
+
+```zsh
+jq -r '.outputs.ec2_private_key.value | gsub("\\n"; "\n")' terraform.tfstate \
+    > archer-ec2-key.pem
+```
+
 2. Retrieve the EC2 password for the SQL Server Management Studio (SSMS) machine/bastion host:
-    `aws ec2 get-password-data --instance-id $(aws ec2 describe-instances --filters "Name=tag:Name,Values=Archer-Windows-Instance-SSMS" --query "Reservations[*].Instances[*].[InstanceId]" --no-cli-pager --output text) --priv-launch-key archer-ec2-key.pem --query 'PasswordData' --no-cli-pager --output text`
+
+```zsh
+aws ec2 get-password-data \
+    --instance-id \
+        $(aws ec2 describe-instances \
+            --filters \
+                "Name=tag:Name,Values=Archer-Windows-Instance-SSMS" \
+                "Name=instance-state-name,Values=running" \
+            --query "Reservations[*].Instances[*].[InstanceId]" \
+            --no-cli-pager \
+            --output text) \
+    --priv-launch-key archer-ec2-key.pem \
+    --query 'PasswordData' \
+    --no-cli-pager \
+    --output text
+```
+
 3. Establish a Systems Manager tunnel from your machine to the SSMS machine:
-    `aws ssm start-session --target $(aws ec2 describe-instances --filters "Name=tag:Name,Values=Archer-Windows-Instance-SSMS" --query "Reservations[*].Instances[*].[InstanceId]" --no-cli-pager --output text) --document-name AWS-StartPortForwardingSession --parameters "localPortNumber=8765,portNumber=3389" --region us-west-2`
-4. The tunnel from Step 3 routes the local port 8765 on your machine to port 3389 of the SSMS EC2 instance. With the tunnel established, start an RDP session with `localhost:8765`, and connect as the `Administrator` user with the password retrieved in Step 2.
-5. Connect with the database. Connection info can be found in the Terraform outputs.
 
-### Resources
+```zsh
+aws ssm start-session \
+    --target \
+        $(aws ec2 describe-instances \
+            --filters \
+                "Name=tag:Name,Values=Archer-Windows-Instance-SSMS" \
+                "Name=instance-state-name,Values=running" \
+            --query "Reservations[*].Instances[*].[InstanceId]" \
+            --no-cli-pager \
+            --output text) \
+    --document-name AWS-StartPortForwardingSession \
+    --parameters "localPortNumber=8765,portNumber=3389" \
+    --region us-west-2
+```
 
-| Resource Type                                          | Description                                     |
-|--------------------------------------------------------|-------------------------------------------------|
-| aws_vpc.vpc                                           | AWS Virtual Private Cloud (VPC)                 |
-| aws_subnet.private_subnet                              | Private subnet within the VPC                   |
-| aws_internet_gateway.igw                               | Internet Gateway for NAT Gateway                |
-| aws_nat_gateway.nat_gateway                            | NAT Gateway for internet access                 |
-| aws_route_table.private_subnet_route_table             | Route table for the private subnet              |
-| aws_route_table_association.private_subnet_association | Association of private subnet with route table  |
-| aws_instance.windows_instance                          | EC2 instance with Windows Server and SQL Server |
+4. The tunnel from Step 3 routes the local port 8765 on your machine to port 3389 of the SSMS EC2 instance. With the tunnel established, start an RDP session with `localhost:8765`, and connect as the `Administrator` user with the password retrieved in Step 2. If prompted, select `Yes` for network discoverability.
 
-### Customization
+5. From the Archer-Windows-Instance-SSMS machine:
+    - If a user has been created, start SQL Server Management Studio from the remote desktop and connect to the database server's IP address using valid credentials
+    - If no SQL Server user has been created, the following PowerShell command can be run from/through the bastion to verify network connectivity between the bastion host (Archer-Windows-Instance-SSMS) and the Database Server (Archer-Windows-Instance-SQL-Server)
 
-Adjust variables in variables.tf for customization.
-Modify the user data block in main.tf for additional configurations.
+```pwsh
+$db_ip = # Add the private IP address for Archer-Windows-Instance-SQL-Server here
 
-Notes
+$result = Test-NetConnection -ComputerName $db_ip -Port 1433
 
-The SQL Server is installed using Chocolatey during instance launch.
-Ensure security best practices are followed, especially when allowing remote connections to SQL Server.
+$result.TcpTestSucceeded # Returns True or False
+```

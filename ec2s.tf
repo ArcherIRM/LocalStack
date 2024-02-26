@@ -112,31 +112,23 @@ Write-Host "Install Chocolatey"
 Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
 
 Write-Host "Install SQL Server"
-choco install sql-server-2022 -y -v --params "'/SQLSYSADMINACCOUNTS=$${env:COMPUTERNAME}\*'"
+choco install sql-server-2022 -y -v
 Write-Host "SQL Server installed"
 
-
-
-
-# Step 1: Set SQL Server Browser service to start automatically and start the service
 Write-Host "Setting SQL Server Browser service to Automatic and starting the service..."
 Set-Service 'SQLBrowser' -StartupType Automatic
 Start-Service 'SQLBrowser'
 
-# Step 2: Enable TCP/IP protocol for SQL Server
-# Note: This step requires SQL Server Configuration Manager to be installed.
 Write-Host "Enabling TCP/IP protocol for SQL Server..."
 $sqlServerConfigManager = Get-WmiObject -Namespace "root\Microsoft\SqlServer\ComputerManagement16" -Class "ServerNetworkProtocol"
 $tcpIp = $sqlServerConfigManager | Where-Object { $_.InstanceName -eq 'MSSQLSERVER' -and $_.ProtocolName -eq 'Tcp' }
 $tcpIp.SetEnable()
 
-# Step 3: Set the TCP Port for IPAll to 1433
 Write-Host "Setting the TCP Port for IPAll to 1433..."
 $regPath = "HKLM:\SOFTWARE\Microsoft\Microsoft SQL Server\MSSQL16.MSSQLSERVER\MSSQLServer\SuperSocketNetLib\Tcp\IPAll"
 Set-ItemProperty -Path $regPath -Name TcpPort -Value "1433"
 Set-ItemProperty -Path $regPath -Name TcpDynamicPorts -Value ""
 
-# Step 4: Create a firewall rule to allow TCP port 1433
 Write-Host "Creating a firewall rule for TCP port 1433..."
 New-NetFirewallRule -DisplayName "SQL Server Remote Access" -Direction Inbound -Protocol TCP -LocalPort 1433 -Action Allow
 
@@ -145,6 +137,7 @@ Write-Host "SQL Server Express should now accept remote connections."
 Restart-Service 'MSSQLSERVER'
 Restart-Service 'SQLBrowser'
 
+Write-Host "Installing the SqlServer module..."
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 Invoke-WebRequest -Uri https://github.com/PowerShell/PowerShellGet/archive/master.zip -OutFile c:\psget.zip
 Expand-Archive c:\psget.zip -DestinationPath C:\psget
@@ -155,16 +148,27 @@ Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
 Install-Module -Name SqlServer -Force -AllowClobber
 Import-Module SqlServer
 
-# Specify SQL Server instance and login details
-# $SqlServerInstance = "$env:COMPUTERAME"
-$SqlServerInstance = "MSSQLSERVER"
+Write-Host "Defining the SQL Server login"
 $Username = "localstack"
-# $Password = "${var.sa_password}"
-$Password = "asdf"
+$Password = "${var.sa_password}"
 
-# Create the SQL Server login
-Add-SqlLogin -ServerInstance $SqlServerInstance -LoginName $Username -LoginType SqlLogin -DefaultDatabase tempdb -Enable -GrantConnectSql # -EncryptPassword $Password 
+$SecPass = ConvertTo-SecureString -String $Password -AsPlainText -Force
+$Credential = New-Object -TypeName System.Management.Automation.PSCredential -ArgumentList $Username, $SecPass
 
+# Set-Location SQLSERVER:\SQL\localhost
+# Get-ChildItem
+
+# Write-Host "Add the SQL Server login to the SQL Server instance"
+# Add-SqlLogin -ServerInstance MSSQLSERVER -LoginName $Username -LoginType SqlLogin -DefaultDatabase tempdb -Enable -GrantConnectSql -LoginPSCredential $Credential
+
+# Add-SqlLogin : Failed to connect to server MSSQLSERVER.
+# At
+# C:\Windows\system32\config\systemprofile\AppData\Local\Temp\Amazon\EC2-Windows\Launch\InvokeUserData\UserScript.ps1:59
+# char:1
+# + Add-SqlLogin -ServerInstance MSSQLSERVER -LoginName $Username -LoginT ...
+# + ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+#     + CategoryInfo          : ObjectNotFound: (System.String[]:String[]) [Add-SqlLogin], ConnectionFailureException
+#     + FullyQualifiedErrorId : ConnectionToServerFailed,Microsoft.SqlServer.Management.PowerShell.Security.AddSqlLogin
 
 Stop-Transcript
 
